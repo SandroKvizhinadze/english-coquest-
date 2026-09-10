@@ -1,0 +1,16 @@
+{
+  "name": "English Podcast & Vocabulary",
+  "short_name": "LinguoDictate",
+  "description": "Learn English through YouTube podcasts with scientific spaced repetition (30m, 1h, 4h, 1d) and phone notifications.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0a09",
+  "theme_color": "#1c1917",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

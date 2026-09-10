@@ -1,0 +1,6 @@
+{
+  "name": "English Podcast Subtitle Dictation",
+  "description": "Learn English through YouTube podcasts with automatic subtitle pausing, interactive dictation typing, and instant pronunciation practice.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
