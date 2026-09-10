@@ -31,31 +31,65 @@ export const WordExplainerModal: React.FC<WordExplainerModalProps> = ({
 
     const cleanWord = word.trim().replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '');
 
-    fetch('/api/ai/explain', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ word: cleanWord || word, sentence }),
-    })
-      .then((res) => res.json())
-      .then((resData) => {
-        if (!isMounted) return;
-        if (resData.success && resData.explanation) {
+    const fetchWordData = async () => {
+      try {
+        let resData: any = null;
+        try {
+          const res = await fetch('/api/ai/explain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word: cleanWord || word, sentence }),
+          });
+          if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+            resData = await res.json();
+          }
+        } catch {}
+
+        if (isMounted && resData?.success && resData?.explanation) {
           setData(resData.explanation);
           if (onWordSaved) {
             onWordSaved(resData.explanation);
             setSavedToQueue(true);
           }
-        } else {
+          return;
+        }
+
+        // Direct browser translation fallback (CORS enabled)
+        const targetWord = cleanWord || word.trim();
+        const transRes = await fetch(
+          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ka&dt=t&q=${encodeURIComponent(
+            targetWord
+          )}`
+        );
+        const transData = await transRes.json();
+        const georgianTrans = transData?.[0]?.[0]?.[0] || targetWord;
+
+        const fallbackExplanation: WordExplanation = {
+          word: targetWord,
+          phonetic: '',
+          georgianTranslation: georgianTrans,
+          simpleExplanation: `The English word "${targetWord}".`,
+          georgianExplanation: `სიტყვა "${targetWord}" ქართულად ნიშნავს: ${georgianTrans}.`,
+          exampleSentence: sentence && sentence.length > 5 ? sentence : `Practice using "${targetWord}" in context.`,
+        };
+
+        if (isMounted) {
+          setData(fallbackExplanation);
+          if (onWordSaved) {
+            onWordSaved(fallbackExplanation);
+            setSavedToQueue(true);
+          }
+        }
+      } catch (err) {
+        if (isMounted) {
           setError('სიტყვის ახსნა დროებით ვერ მოხერხდა. სცადეთ ხელახლა.');
         }
-      })
-      .catch((err) => {
-        if (!isMounted) return;
-        setError('შეცდომა კავშირისას. გთხოვთ სცადოთ ხელახლა.');
-      })
-      .finally(() => {
+      } finally {
         if (isMounted) setLoading(false);
-      });
+      }
+    };
+
+    fetchWordData();
 
     return () => {
       isMounted = false;

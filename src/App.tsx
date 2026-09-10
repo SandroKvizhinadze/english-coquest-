@@ -41,6 +41,7 @@ import {
   getVideoProgress,
   deleteSavedVideo,
 } from './utils/videoStorage';
+import { extractSubtitlesClientSide } from './utils/transcriptFetcher';
 import {
   ArrowRight,
   Loader2,
@@ -152,15 +153,33 @@ export default function App() {
     setIsAnalyzing(true);
 
     try {
-      const res = await fetch('/api/analyze-video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId: extractedId }),
-      });
+      let data: any = null;
 
-      const data = await res.json();
+      // 1. Try server endpoint first
+      try {
+        const res = await fetch('/api/analyze-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId: extractedId }),
+        });
 
-      if (data.success && data.subtitles && data.subtitles.length > 0) {
+        // Safe JSON check: prevents syntax error if hosting returned HTML 404
+        if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+          data = await res.json();
+        }
+      } catch (networkErr) {
+        console.warn('Backend API notice, switching to client-side extractor:', networkErr);
+      }
+
+      // 2. Client-side fallback if server returned 404, HTML, or empty subtitles
+      if (!data || !data.success || !data.subtitles || data.subtitles.length === 0) {
+        const clientResult = await extractSubtitlesClientSide(extractedId);
+        if (clientResult.success && clientResult.subtitles.length > 0) {
+          data = clientResult;
+        }
+      }
+
+      if (data && data.success && data.subtitles && data.subtitles.length > 0) {
         const saved = getVideoProgress(extractedId);
         const completedIdsSet = new Set(saved?.completedIds || []);
 
@@ -215,7 +234,7 @@ export default function App() {
       } else {
         setVideoId(extractedId);
         setAnalysisError(
-          data.error ||
+          data?.error ||
             'ამ ვიდეოზე ავტომატური სუბტიტრები ვერ მოიძებნა. შეგიძლიათ ჩასვათ ტრანსკრიპტი ან SRT ქვემოთ:'
         );
         setShowManualFallback(true);
@@ -235,15 +254,28 @@ export default function App() {
     setIsAnalyzing(true);
 
     try {
-      const res = await fetch('/api/analyze-video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId: savedVideoId }),
-      });
+      let data: any = null;
 
-      const data = await res.json();
+      try {
+        const res = await fetch('/api/analyze-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId: savedVideoId }),
+        });
 
-      if (data.success && data.subtitles && data.subtitles.length > 0) {
+        if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+          data = await res.json();
+        }
+      } catch {}
+
+      if (!data || !data.success || !data.subtitles || data.subtitles.length === 0) {
+        const clientResult = await extractSubtitlesClientSide(savedVideoId);
+        if (clientResult.success && clientResult.subtitles.length > 0) {
+          data = clientResult;
+        }
+      }
+
+      if (data && data.success && data.subtitles && data.subtitles.length > 0) {
         const saved = getVideoProgress(savedVideoId);
         const completedIdsSet = new Set(saved?.completedIds || []);
 
@@ -279,7 +311,7 @@ export default function App() {
         }
       } else {
         setVideoId(savedVideoId);
-        setAnalysisError(data.error || 'ვიდეოს სუბტიტრები ვერ ჩაიტვირთა.');
+        setAnalysisError(data?.error || 'ვიდეოს სუბტიტრები ვერ ჩაიტვირთა.');
       }
     } catch (err: any) {
       setAnalysisError(err?.message || 'ვიდეოს ჩატვირთვა ვერ მოხერხდა.');
@@ -329,17 +361,41 @@ export default function App() {
       return;
     }
 
-    // Otherwise align with Gemini
+    // Otherwise align with Gemini or algorithmic sentence chunking
     try {
-      const res = await fetch('/api/ai/parse-transcript', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rawText: manualText, videoId }),
-      });
-      const data = await res.json();
-      if (data.success && data.segments && data.segments.length > 0) {
+      let data: any = null;
+      try {
+        const res = await fetch('/api/ai/parse-transcript', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawText: manualText, videoId }),
+        });
+        if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+          data = await res.json();
+        }
+      } catch {}
+
+      let segments = data?.segments;
+
+      if (!segments || segments.length === 0) {
+        // Algorithmic sentence splitter fallback
+        const sentences = manualText
+          .split(/(?<=[.?!])\s+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        const step = Math.min(180 / Math.max(sentences.length, 1), 6);
+        segments = sentences.map((s, idx) => ({
+          id: idx + 1,
+          start: Math.round(idx * step * 10) / 10,
+          end: Math.round((idx + 1) * step * 10) / 10,
+          text: s,
+        }));
+      }
+
+      if (segments && segments.length > 0) {
         setSubtitles(
-          data.segments.map((s: SubtitleSegment, idx: number) => ({
+          segments.map((s: SubtitleSegment, idx: number) => ({
             ...s,
             id: idx + 1,
             completed: false,
@@ -347,7 +403,7 @@ export default function App() {
         );
         setVideoPlan({
           title: `YouTube Video (${videoId})`,
-          summary: 'AI-ით დაყოფილი და სინქრონიზებული ტრანსკრიპტი.',
+          summary: 'დაყოფილი და სინქრონიზებული ტრანსკრიპტი.',
           level: 'Custom',
         });
         setShowManualFallback(false);
