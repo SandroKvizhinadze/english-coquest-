@@ -189,8 +189,15 @@ export default function App() {
         ) {
           initialIndex = saved.currentSegmentIndex;
         }
+
+        const initialStartTime = loadedSubtitles[initialIndex]?.start || 0;
         setCurrentSegmentIndex(initialIndex);
+        setCurrentTime(initialStartTime);
         setIsPausedForDictation(false);
+
+        if (playerControlsRef.current) {
+          playerControlsRef.current.seekTo(initialStartTime);
+        }
 
         // Persist to saved videos
         saveVideoProgress({
@@ -201,7 +208,7 @@ export default function App() {
           totalSubtitles: loadedSubtitles.length,
           completedSubtitlesCount: completedIdsSet.size,
           currentSegmentIndex: initialIndex,
-          currentTime: loadedSubtitles[initialIndex]?.start || 0,
+          currentTime: initialStartTime,
           completedIds: Array.from(completedIdsSet),
         });
         setSavedVideos(loadAllSavedVideos());
@@ -259,10 +266,17 @@ export default function App() {
             ? saved.currentSegmentIndex
             : 0;
 
+        const targetStartTime = loadedSubtitles[targetIdx]?.start ?? (saved?.currentTime ?? 0);
+
         setCurrentSegmentIndex(targetIdx);
+        setCurrentTime(targetStartTime);
         setIsPausedForDictation(false);
         setHasStartedSession(true);
         setIsSavedVideosOpen(false);
+
+        if (playerControlsRef.current) {
+          playerControlsRef.current.seekTo(targetStartTime);
+        }
       } else {
         setVideoId(savedVideoId);
         setAnalysisError(data.error || 'ვიდეოს სუბტიტრები ვერ ჩაიტვირთა.');
@@ -851,7 +865,11 @@ export default function App() {
             <button
               onClick={() => {
                 setHasStartedSession(true);
-                if (playerControlsRef.current) {
+                const seg = subtitles[currentSegmentIndex];
+                if (seg && playerControlsRef.current) {
+                  playerControlsRef.current.seekTo(seg.start);
+                  playerControlsRef.current.play(true);
+                } else if (playerControlsRef.current) {
                   playerControlsRef.current.play(true);
                 }
               }}

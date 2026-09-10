@@ -61,7 +61,8 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isApiLoaded, setIsApiLoaded] = useState(false);
   const [isPlayerReady, setIsPlayerReady] = useState(false);
-  const [currentTime, setCurrentTimeState] = useState(0);
+  const targetInitialTime = subtitles[currentSegmentIndex]?.start ?? 0;
+  const [currentTime, setCurrentTimeState] = useState(targetInitialTime);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(100);
   const [isMuted, setIsMuted] = useState(false);
@@ -70,7 +71,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const [isCleanMode, setIsCleanMode] = useState(true); // Pure video mode: crops YouTube title bar & branding
 
   const intervalRef = useRef<number | null>(null);
-  const lastPolledTimeRef = useRef<number>(0);
+  const lastPolledTimeRef = useRef<number>(targetInitialTime);
   const onSeekRef = useRef(onSeek);
   onSeekRef.current = onSeek;
 
@@ -90,9 +91,28 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const isAlreadyPausedRef = useRef<boolean>(false);
   const currentSeg = subtitles[currentSegmentIndex];
 
+  // When currentSegmentIndex changes or subtitles update, reposition the player if outside this segment
   useEffect(() => {
     isAlreadyPausedRef.current = false;
-  }, [currentSegmentIndex]);
+    const seg = subtitles[currentSegmentIndex];
+    if (!seg) return;
+
+    if (playerInstanceRef.current && isPlayerReady) {
+      try {
+        const curT = playerInstanceRef.current.getCurrentTime?.() ?? 0;
+        // If player time is outside of this subtitle's range (e.g. from resume or segment switch),
+        // seek directly to the beginning of this subtitle!
+        if (curT < seg.start - 0.35 || curT >= seg.end - 0.05) {
+          playerInstanceRef.current.seekTo(seg.start, true);
+          setCurrentTimeState(seg.start);
+          lastPolledTimeRef.current = seg.start;
+        }
+      } catch {}
+    } else {
+      // Player not ready yet, keep state aligned with subtitle start
+      setCurrentTimeState(seg.start);
+    }
+  }, [currentSegmentIndex, subtitles, isPlayerReady]);
 
   useEffect(() => {
     if (!isPausedForDictation) {
@@ -144,12 +164,15 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       setIsPlayerReady(false);
     }
 
+    const targetStartSec = subtitlesRef.current[currentSegmentIndexRef.current]?.start || 0;
+
     const newPlayer = new window.YT.Player(playerId, {
       videoId: videoId,
       width: '100%',
       height: '100%',
       playerVars: {
         autoplay: 0,
+        start: Math.max(0, Math.floor(targetStartSec)), // Pre-position player at subtitle start second
         controls: 0, // Completely hide YouTube default controls
         disablekb: 1, // Strictly disable keyboard controls
         fs: 0,
@@ -173,6 +196,15 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             // Disable YouTube native captions so they do not clash with dictation
             event.target.unloadModule('captions');
             event.target.unloadModule('cc');
+
+            // Seek accurately to exact decimal start time of the active subtitle
+            const activeSeg = subtitlesRef.current[currentSegmentIndexRef.current];
+            const startSec = activeSeg ? activeSeg.start : targetStartSec;
+            if (startSec > 0) {
+              event.target.seekTo(startSec, true);
+              setCurrentTimeState(startSec);
+              lastPolledTimeRef.current = startSec;
+            }
           } catch {}
         },
         onStateChange: (event: any) => {
@@ -191,12 +223,23 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               return;
             }
 
-            // Strict enforcement: if current segment is at or beyond the segment end, pause immediately!
             const idx = currentSegmentIndexRef.current;
             const segs = subtitlesRef.current;
             const currentSeg = segs && segs[idx];
             if (currentSeg) {
               const curT = playerInstanceRef.current.getCurrentTime();
+              // If video accidentally started playing before the current subtitle (e.g. from 0:00),
+              // correct it immediately to the subtitle start!
+              if (curT < currentSeg.start - 0.5) {
+                try {
+                  playerInstanceRef.current.seekTo(currentSeg.start, true);
+                  setCurrentTimeState(currentSeg.start);
+                  lastPolledTimeRef.current = currentSeg.start;
+                } catch {}
+                return;
+              }
+
+              // Strict enforcement: if current segment is at or beyond the segment end, pause immediately!
               if (curT >= currentSeg.end - 0.06) {
                 try {
                   playerInstanceRef.current.pauseVideo();
@@ -252,10 +295,13 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         const seg = segs && segs[idx];
         const curT = playerInstanceRef.current.getCurrentTime() || 0;
 
-        // If at or past segment end, replay from start of this segment so they can hear it
-        if (!force && seg && curT >= seg.end - 0.1) {
-          replayCurrentSegment();
-          return;
+        // If player is outside of the active segment or at/past the end, seek to start of this segment!
+        if (seg && (curT < seg.start - 0.35 || curT >= seg.end - 0.1)) {
+          try {
+            playerInstanceRef.current.seekTo(seg.start, true);
+            setCurrentTimeState(seg.start);
+            lastPolledTimeRef.current = seg.start;
+          } catch {}
         }
 
         try {
@@ -266,7 +312,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         } catch {}
       }
     },
-    [isPlayerReady, replayCurrentSegment]
+    [isPlayerReady]
   );
 
   const pause = useCallback(() => {

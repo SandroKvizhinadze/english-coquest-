@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SavedVideoProgress } from '../types';
 import { Play, Trash2, Clock, CheckCircle2, Bookmark, ExternalLink } from 'lucide-react';
+import { formatTime } from '../utils/subtitleParser';
 
 interface SavedVideosListProps {
   savedVideos: SavedVideoProgress[];
@@ -97,7 +98,14 @@ export const SavedVideosList: React.FC<SavedVideosListProps> = ({
                 {/* Progress bar */}
                 <div className="mt-2">
                   <div className="flex items-center justify-between text-[10px] text-stone-400 mb-1">
-                    <span>სუბტიტრი #{video.currentSegmentIndex + 1}</span>
+                    <span>
+                      სუბტიტრი #{video.currentSegmentIndex + 1}
+                      {video.currentTime > 0 && (
+                        <span className="text-amber-400/90 ml-1 font-mono">
+                          ({formatTime(video.currentTime)})
+                        </span>
+                      )}
+                    </span>
                     <span className="font-mono text-amber-400/90">{percent}%</span>
                   </div>
                   <div className="w-full h-1.5 bg-stone-800 rounded-full overflow-hidden">
